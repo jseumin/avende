@@ -209,6 +209,10 @@ h1 { font-size: 27px; letter-spacing: -1.1px; margin: 7px 0 5px; line-height: 1.
 .status-pill { border-radius: 20px; display: inline-block; padding: 5px 8px; font-size: 9px; font-weight: 700; }
 .status-paid { background: #edf7f0; color: #42916a; }
 .status-pending { background: #fff4e9; color: #d68a49; }
+.status-canceled { background: #f1f2f4; color: #747b86; }
+.account-action:disabled { color: #a6abb3; background: #f7f8f9; cursor: not-allowed; }
+.cancellation-notice { background: #fff5f1; color: #8c6a5d; }
+.cancellation-notice strong { color: #9c563c; }
 .participant-row .amount { font-size: 11px; font-weight: 700; margin-right: 9px; }
 .payment-participant { gap: 8px; }
 .account-action { padding: 7px 9px; white-space: nowrap; }

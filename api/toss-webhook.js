@@ -1,4 +1,5 @@
-const { readRecord, writeRecord, tossRequest, keyPrefix } = require("./virtual-accounts");
+const { readRecord, writeRecord, tossRequest, keyPrefix, readGroupState } = require("./virtual-accounts");
+const { cancelGroupForMissedDeposit } = require("./group-cancellation");
 
 function json(res, status, body) {
   res.statusCode = status;
@@ -46,6 +47,9 @@ module.exports = async function tossWebhook(req, res) {
 
     await writeRecord(`${keyPrefix}:${record.participantId}`, record);
     await writeRecord(`${keyPrefix}:order:${orderId}`, record);
+    if (status === "EXPIRED" || (await readGroupState()).status !== "ACTIVE") {
+      await cancelGroupForMissedDeposit(record.participantId);
+    }
     return json(res, 200, { received: true });
   } catch (error) {
     console.error("Toss webhook error:", error.message);

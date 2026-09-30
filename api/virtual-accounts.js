@@ -8,6 +8,42 @@ const participants = {
 const keyPrefix = "moa:demo-group-0928-03";
 const recordTtlSeconds = 60 * 60 * 24 * 30;
 const isParticipant = (id) => Object.hasOwn(participants, id);
+const groupStateKey = `${keyPrefix}:group-state`;
+
+function encryptRefundAccount(account) {
+  if (!account || typeof account !== "object") return null;
+  const { bankCode, accountNumber, holderName } = account;
+  if (![bankCode, accountNumber, holderName].every((value) => typeof value === "string" && value.length > 0)) return null;
+
+  const key = crypto.createHash("sha256").update(validateEnvironment().TOSS_SECRET_KEY).digest();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([cipher.update(JSON.stringify({ bankCode, accountNumber, holderName }), "utf8"), cipher.final()]);
+  return {
+    iv: iv.toString("base64"),
+    tag: cipher.getAuthTag().toString("base64"),
+    data: encrypted.toString("base64")
+  };
+}
+
+function decryptRefundAccount(encrypted) {
+  if (!encrypted) return null;
+  const key = crypto.createHash("sha256").update(validateEnvironment().TOSS_SECRET_KEY).digest();
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(encrypted.iv, "base64"));
+  decipher.setAuthTag(Buffer.from(encrypted.tag, "base64"));
+  return JSON.parse(Buffer.concat([
+    decipher.update(Buffer.from(encrypted.data, "base64")),
+    decipher.final()
+  ]).toString("utf8"));
+}
+
+async function readGroupState() {
+  return (await readRecord(groupStateKey)) || { status: "ACTIVE" };
+}
+
+async function writeGroupState(state) {
+  await writeRecord(groupStateKey, state);
+}
 
 function json(res, status, body) {
   res.statusCode = status;
@@ -85,6 +121,7 @@ function publicAccount(record, includeAccountNumber = false) {
     status: record.status,
     orderId: record.orderId,
     createdAt: record.createdAt,
+    refundStatus: record.refundStatus || null,
     bankCode: account.bank || null,
     accountNumber: includeAccountNumber ? account.accountNumber || null : null,
     dueDate: account.dueDate || null
@@ -106,13 +143,20 @@ async function handleGet(req, res) {
       ? publicAccount(record, id === participantId)
       : { participantId: id, participantName: id, amount: participants[id], status: "NOT_ISSUED" };
   }));
-  return json(res, 200, { accounts });
+  const groupState = await readGroupState();
+  return json(res, 200, {
+    accounts,
+    groupState: { status: groupState.status, canceledAt: groupState.canceledAt || null }
+  });
 }
 
 async function handlePost(req, res) {
   const { groupId, participantId, action, orderId } = req.body || {};
   if (!validGroupId(groupId) || !isParticipant(participantId)) {
     return json(res, 400, { error: "공동배달 또는 참여자 정보를 확인해 주세요." });
+  }
+  if ((await readGroupState()).status !== "ACTIVE") {
+    return json(res, 409, { error: "미입금으로 이미 취소된 공동배달입니다." });
   }
 
   const recordKey = `${keyPrefix}:${participantId}`;
@@ -129,7 +173,7 @@ async function handlePost(req, res) {
   }
 
   const existing = await readRecord(recordKey);
-  if (existing?.status === "WAITING_FOR_DEPOSIT" || existing?.status === "PAID") {
+  if (existing?.status === "WAITING_FOR_DEPOSIT" || existing?.status === "PAID" || existing?.status === "CANCEL_FAILED") {
     return json(res, 409, { error: "이미 발급된 가상계좌가 있어요. 기존 계좌를 확인해 주세요." });
   }
   if (existing?.status === "REQUESTING" && Date.now() - Date.parse(existing.createdAt) < 10 * 60_000) {
@@ -142,8 +186,11 @@ async function handlePost(req, res) {
   if (locked !== "OK") return json(res, 409, { error: "가상계좌 발급을 처리 중이에요. 잠시 후 다시 시도해 주세요." });
 
   try {
+    if ((await readGroupState()).status !== "ACTIVE") {
+      return json(res, 409, { error: "미입금으로 이미 취소된 공동배달입니다." });
+    }
     const current = await readRecord(recordKey);
-    if (current?.status === "WAITING_FOR_DEPOSIT" || current?.status === "PAID") {
+    if (current?.status === "WAITING_FOR_DEPOSIT" || current?.status === "PAID" || current?.status === "CANCEL_FAILED") {
       return json(res, 409, { error: "이미 발급된 가상계좌가 있어요. 기존 계좌를 확인해 주세요." });
     }
     if (current?.status === "REQUESTING") {
@@ -201,3 +248,8 @@ module.exports.writeRecord = writeRecord;
 module.exports.tossRequest = tossRequest;
 module.exports.publicAccount = publicAccount;
 module.exports.keyPrefix = keyPrefix;
+module.exports.participants = participants;
+module.exports.readGroupState = readGroupState;
+module.exports.writeGroupState = writeGroupState;
+module.exports.encryptRefundAccount = encryptRefundAccount;
+module.exports.decryptRefundAccount = decryptRefundAccount;

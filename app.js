@@ -20,6 +20,7 @@ let selectedPost = posts[0];
 let appliedPostId = null;
 let paid = new Set();
 let received = new Set(["민지", "유진"]);
+let groupState = { status: "ACTIVE" };
 let rating = 0;
 const customMenu = [];
 const virtualAccounts = new Map();
@@ -61,7 +62,7 @@ function setPage(page) {
   currentPage = page;
   document.querySelectorAll(".nav-item").forEach((item) => item.classList.toggle("active", item.dataset.page === page));
   render();
-  if (page === "payment") {
+  if (page === "payment" || page === "delivery") {
     refreshVirtualAccounts();
     accountRefreshTimer = window.setInterval(refreshVirtualAccounts, 8000);
   }
@@ -154,20 +155,21 @@ function applicantsPage() {
 }
 
 async function refreshVirtualAccounts() {
-  if (currentPage !== "payment") return;
+  if (currentPage !== "payment" && currentPage !== "delivery") return;
   try {
     const response = await fetch(`/api/virtual-accounts?groupId=${encodeURIComponent(demoGroupId)}`, { cache: "no-store" });
     const result = await readApiResponse(response, "입금 상태를 불러오지 못했어요.");
     virtualAccounts.clear();
     for (const account of result.accounts) virtualAccounts.set(account.participantId, account);
     paid = new Set(result.accounts.filter((account) => account.status === "PAID").map((account) => account.participantId));
+    groupState = result.groupState || { status: "ACTIVE" };
     virtualAccountError = "";
-    if (currentPage === "payment") render();
+    render();
   } catch (error) {
     virtualAccountError = error.message.includes("Failed to fetch")
       ? "Vercel 배포에서 API를 사용하고 Toss·Upstash 환경 변수를 설정해 주세요."
       : error.message;
-    if (currentPage === "payment") render();
+    render();
   }
 }
 
@@ -262,26 +264,40 @@ function paymentPage() {
   const total = people.reduce((sum, person) => sum + person.amount, 0);
   const paidTotal = people.filter((person) => paid.has(person.name)).reduce((sum, person) => sum + person.amount, 0);
   const allPaid = people.every((person) => paid.has(person.name));
+  const canceled = groupState.status !== "ACTIVE";
   return `<div class="page-heading"><div><div class="eyebrow">PARTICIPANT VIRTUAL ACCOUNTS</div><h1>함께 입금하기</h1><p class="subheading">참여자마다 분담액이 지정된 가상계좌를 따로 발급해요.</p></div><button class="secondary-button" data-page="chat">← 채팅방</button></div>
+    ${canceled ? `<div class="account-info-box cancellation-notice"><strong>${groupState.status === "CANCELED" ? "미입금으로 공동배달이 취소됐어요" : "공동배달 취소와 환불을 처리하고 있어요"}</strong><span>입금 기한 내 미입금이 확인되어 발급된 계좌를 취소합니다. 이미 입금한 금액은 등록한 환불 계좌로 반환돼요.</span></div>` : ""}
     <div class="detail-layout"><section class="page-card"><div class="payment-total"><small>총 결제 예정 금액</small><strong>${won(total)}</strong></div><div class="section-title" style="margin-top:22px"><h2>입금 현황</h2><span class="subheading">${people.filter((person) => paid.has(person.name)).length} / ${people.length}명 완료</span></div>
       ${people.map((person) => {
         const account = virtualAccounts.get(person.name);
         const status = account?.status || "NOT_ISSUED";
         const paidStatus = status === "PAID";
-        const statusLabel = paidStatus ? "입금 완료" : status === "EXPIRED" || status === "CANCELED" || status === "FAILED" ? "발급 종료" : status === "WAITING_FOR_DEPOSIT" ? "입금 대기" : status === "REQUESTING" ? "발급 처리 중" : "계좌 미발급";
-        const canIssue = status === "NOT_ISSUED" || status === "FAILED" || status === "EXPIRED" || status === "CANCELED";
+        const statusLabel = status === "REFUNDED" ? "환불 완료" : status === "REFUNDING" ? "환불 처리 중" : status === "REFUND_FAILED" ? "환불 확인 필요" : status === "CANCEL_FAILED" ? "계좌 취소 확인 필요" : paidStatus ? "입금 완료" : status === "EXPIRED" || status === "CANCELED" || status === "FAILED" ? "발급 종료" : status === "WAITING_FOR_DEPOSIT" ? "입금 대기" : status === "REQUESTING" ? "발급 처리 중" : "계좌 미발급";
+        const canIssue = !canceled && (status === "NOT_ISSUED" || status === "FAILED" || status === "EXPIRED" || status === "CANCELED");
         const actionLabel = canIssue ? "계좌 발급" : status === "REQUESTING" ? "발급 진행 중" : "계좌 확인";
-        return `<div class="participant-row payment-participant">${avatar(person.name)}<div class="participant-copy"><strong>${person.name}${person.name === "서연" ? " (나)" : ""}</strong><small>${person.name === "민지" ? "리더" : "참여자"} · ${won(person.amount)}</small></div><span class="status-pill ${paidStatus ? "status-paid" : "status-pending"}">${statusLabel}</span><button class="secondary-button account-action" data-action="participant-account" data-participant="${person.name}">${actionLabel}</button></div>`;
+        const statusClass = ["REFUNDED", "PAID"].includes(status) ? "status-paid" : ["CANCELED", "EXPIRED", "FAILED"].includes(status) ? "status-canceled" : "status-pending";
+        return `<div class="participant-row payment-participant">${avatar(person.name)}<div class="participant-copy"><strong>${person.name}${person.name === "서연" ? " (나)" : ""}</strong><small>${person.name === "민지" ? "리더" : "참여자"} · ${won(person.amount)}</small></div><span class="status-pill ${statusClass}">${statusLabel}</span><button class="secondary-button account-action" data-action="participant-account" data-participant="${person.name}" ${canceled ? "disabled" : ""}>${actionLabel}</button></div>`;
       }).join("")}
       <div class="progress-track"><div class="progress-fill" style="width:${Math.round((paidTotal / total) * 100)}%"></div></div><div class="progress-caption"><span>입금 완료 금액 ${won(paidTotal)}</span><span>${Math.round((paidTotal / total) * 100)}%</span></div>
     </section><aside class="page-card"><div class="section-title"><h2>참여자별 가상계좌</h2><span class="tag">Toss 테스트</span></div><p class="subheading">결제창에서 은행을 선택하면 각 계좌에 해당 참여자의 분담액만 입금할 수 있어요.</p>
-      <div class="account-info-box">${virtualAccountError ? `<strong>연동 설정이 필요해요</strong><span>${escapeHTML(virtualAccountError)}</span>` : "<strong>입금 상태 자동 확인</strong><span>토스 웹훅을 받으면 입금 완료로 자동 변경돼요.</span>"}</div>
+      <div class="account-info-box">${virtualAccountError ? `<strong>연동 설정이 필요해요</strong><span>${escapeHTML(virtualAccountError)}</span>` : canceled ? "<strong>자동 취소 및 환불</strong><span>환불은 은행 사정에 따라 영업일 기준 약 2일이 걸릴 수 있어요. 환불 상태는 이 화면에서 확인할 수 있어요.</span>" : "<strong>입금 상태 자동 확인</strong><span>입금 기한 내 한 명이라도 미입금이면 주문을 취소하고 입금된 금액을 환불해요.</span>"}</div>
       <div class="detail-block"><h3>분담액 예시</h3><p>리더 15,000원 · 서연 9,000원 · 유진 8,000원<br />각 참여자는 자신의 가상계좌에 표시된 금액을 입금해요.</p></div>
-      <div class="join-note">${allPaid ? "모든 금액이 입금되었습니다. 배달 주문을 진행합니다." : "모든 참여자의 입금이 확인되면 주문을 진행해요."}</div>
+      <div class="join-note">${canceled ? "취소된 공동배달은 다시 입금할 수 없어요." : allPaid ? "모든 금액이 입금되었습니다. 배달 주문을 진행합니다." : "모든 참여자의 입금이 확인되면 주문을 진행해요."}</div>
     </aside></div>`;
 }
 
 function deliveryPage() {
+  if (groupState.status !== "ACTIVE") {
+    const refundLabel = (account) => account?.status === "REFUNDED" ? "환불 완료" : account?.status === "REFUNDING" ? "환불 처리 중" : account?.status === "REFUND_FAILED" ? "환불 확인 필요" : account?.status === "CANCEL_FAILED" ? "계좌 취소 확인 필요" : account?.status === "CANCELED" || account?.status === "EXPIRED" ? "결제 없음" : "확인 중";
+    return `<div class="page-heading"><div><div class="eyebrow">ORDER TRACKING</div><h1>공동배달 진행 상황</h1><p class="subheading">입금 기한 내 미입금으로 주문이 취소됐어요.</p></div><button class="secondary-button" data-page="payment">입금·환불 현황</button></div>
+      <section class="page-card"><div class="section-title"><h2>꼬꼬아찌 숯불치킨</h2><span class="status-pill status-canceled">${groupState.status === "CANCELED" ? "주문 취소" : "취소 처리 중"}</span></div><p class="subheading">미입금 참여자가 확인되어 공동배달과 미입금 계좌를 취소했어요.</p>
+        <div class="cancellation-notice account-info-box"><strong>환불 진행 안내</strong><span>입금 완료된 분담금은 각 참여자가 결제 시 등록한 환불 계좌로 반환됩니다. 은행 처리에는 영업일 기준 약 2일이 걸릴 수 있어요.</span></div>
+        ${paymentParticipants.map((person) => {
+          const account = virtualAccounts.get(person.name);
+          return `<div class="participant-row">${avatar(person.name)}<div class="participant-copy"><strong>${person.name}${person.name === "서연" ? " (나)" : ""}</strong><small>${won(person.amount)} · ${refundLabel(account)}</small></div><span class="status-pill ${account?.status === "REFUNDED" ? "status-paid" : "status-canceled"}">${refundLabel(account)}</span></div>`;
+        }).join("")}
+      </section>`;
+  }
   const steps = ["모집 완료", "메뉴 결정", "입금 대기", "결제 완료", "배달 중", "수령 확인"];
   return `<div class="page-heading"><div><div class="eyebrow">ORDER TRACKING</div><h1>공동배달 진행 상황</h1><p class="subheading">함께하는 주문의 모든 순간을 확인해요.</p></div><button class="secondary-button" data-page="chat">채팅방에서 조율하기</button></div>
     <section class="page-card"><div class="section-title"><h2>꼬꼬아찌 숯불치킨</h2><span class="status-pill status-paid">배달 중</span></div><p class="subheading">주문번호 #MM-0928-03 · 오늘 오후 7:18 주문 완료</p>
