@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f8fa" />
+    <title>가상계좌 발급 취소 - 모아먹자</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <style>
+      body { min-height: 100vh; display: grid; place-items: center; padding: 20px; }
+      main { width: min(460px, 100%); text-align: center; }
+      .page-card { padding: 30px; }
+      .primary-button { display: inline-block; margin-top: 16px; }
+      #message { white-space: pre-line; }
+    </style>
+  </head>
+  <body>
+    <main class="page-card">
+      <div class="brand-mark" style="margin:0 auto 15px">모</div>
+      <div class="eyebrow">TOSS VIRTUAL ACCOUNT</div>
+      <h1>가상계좌 발급이 완료되지 않았어요</h1>
+      <p class="subheading" id="message">발급을 취소했거나 진행 중 오류가 발생했어요.</p>
+      <a class="primary-button" href="/?page=payment">입금 현황으로 돌아가기</a>
+    </main>
+    <script>
+      const params = new URLSearchParams(location.search);
+      const message = document.querySelector("#message");
+      const code = params.get("code");
+      const text = params.get("message");
+      if (code || text) message.textContent = [code, text].filter(Boolean).join(" · ");
+
+      const orderId = params.get("orderId");
+      const participantId = params.get("participantId");
+      if (orderId && participantId) {
+        fetch("/api/virtual-accounts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "abandon", groupId: "demo-group-0928-03", participantId, orderId })
+        });
+      }
+    </script>
+  </body>
+</html>
